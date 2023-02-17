@@ -1,7 +1,37 @@
 #include <stdio.h>
-#include <malloc.h>
+#include <stdlib.h>
+#include <sys/time.h>
+#include <stdint-gcc.h>
 #include "libcoro.h"
 #include "limits.h"
+#include "string.h"
+
+typedef struct arguments {
+    char **filenames;
+    int *current_file_i;
+    int files_amount;
+    int **arrays;
+    int *sizes;
+}arguments;
+
+static uint64_t yield_time;
+static int coro_target_latency;
+
+uint64_t GetTimeStamp() {
+    struct timeval tv;
+    gettimeofday(&tv,NULL);
+    return tv.tv_sec*(uint64_t)1000000+tv.tv_usec;
+}
+
+void my_yield() {
+//    printf("%d\n", GetTimeStamp());
+    uint64_t current_time = GetTimeStamp();
+    if (current_time >= yield_time + coro_target_latency) {
+        printf("Yield at timestamp: %lu\n", current_time);
+        yield_time = current_time;
+        coro_yield();
+    }
+}
 
 int partition(int *arr, int low, int high) {
     int pivot = arr[high];
@@ -24,6 +54,7 @@ int partition(int *arr, int low, int high) {
 void sort(int *arr, int low, int high) {
     if (low < high) {
         int pi = partition(arr, low, high);
+        my_yield();
         sort(arr, low, pi - 1);
         sort(arr, pi + 1, high);
     }
@@ -46,13 +77,15 @@ void read_file(int *arr, char *filename, int *size) {
     *size = i;
     fclose(file);
 }
-
-int worker(char **filenames, int *current_file_i, int files_amount, int **arrays, int *sizes) {
+// char **filenames, int *current_file_i, int files_amount, int **arrays, int *sizes
+int worker(void *context) {
+    arguments *args = context;
     while (1) {
-        int current_i = (*current_file_i)++;
-        if (current_i == files_amount) break;
-        read_file(arrays[current_i], filenames[current_i], &sizes[current_i]);
-        sort(arrays[current_i], 0, sizes[current_i] - 1);
+        int current_i = (*args->current_file_i)++;
+        if (current_i >= args->files_amount) break;
+        read_file(args->arrays[current_i], args->filenames[current_i], &args->sizes[current_i]);
+        sort(args->arrays[current_i], 0, args->sizes[current_i] - 1);
+        printf("%s file sorted\n", args->filenames[current_i]);
     }
     return 0;
 }
@@ -99,9 +132,23 @@ void merge(int *arrays[], int *sizes, int n) {
 
 
 int main(int argc, char *argv[]) {
-    char **filenames;
-    filenames = &argv[1];
-    int files_amount = argc - 1;
+    uint64_t start_time = GetTimeStamp();
+    int cor_nums = 3;
+    int target_latency = 50;
+    char **filenames = calloc(argc - 1, sizeof(int*));
+    int files_amount = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-c") == 0) {
+            cor_nums = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-l") == 0) {
+            target_latency = atoi(argv[++i]);
+        } else {
+            filenames[files_amount++] = argv[i];
+        }
+    }
+
+    coro_target_latency = target_latency / cor_nums;
+    long long total_switch_time = 0;
     int current_file_i = 0;
     int sizes[files_amount];
     int *arrays[files_amount];
@@ -109,11 +156,28 @@ int main(int argc, char *argv[]) {
         arrays[i] = (int*)calloc(10, sizeof(int));
     }
 
-    worker(filenames, &current_file_i, files_amount, arrays, sizes);
+    coro_sched_init();
+
+    arguments worker_args = {filenames, &current_file_i, files_amount, arrays, sizes};
+
+    yield_time = GetTimeStamp();
+    for (int i = 0; i < cor_nums; ++i) {
+        coro_new(worker, &worker_args);
+    }
+
+    struct coro *c;
+    while ((c = coro_sched_wait()) != NULL) {
+        printf("Coroutine finished. Its switch count: %lld\n", coro_switch_count(c));
+        total_switch_time += coro_switch_count(c);
+        coro_delete(c);
+    }
 
     merge(arrays, sizes, argc - 1);
+    printf("All files merged in output.txt\n");
     for (int i = 0; i < files_amount; i++) {
         free(arrays[i]);
     }
+    printf("Total switch count: %lld\n", total_switch_time);
+    printf("Total work time: %lu mcs", GetTimeStamp() - start_time);
     return 0;
 }
