@@ -6,6 +6,7 @@
 #include "limits.h"
 #include "string.h"
 
+// arguments for coroutine
 typedef struct arguments {
     char **filenames;
     int *current_file_i;
@@ -14,15 +15,17 @@ typedef struct arguments {
     int *sizes;
 }arguments;
 
-static uint64_t yield_time;
-static int coro_target_latency;
+static uint64_t yield_time; // timestamp of last yield
+static int coro_target_latency; // target latency / number of coroutines
 
+// get current timestamp in microseconds
 uint64_t GetTimeStamp() {
     struct timeval tv;
     gettimeofday(&tv,NULL);
     return tv.tv_sec*(uint64_t)1000000+tv.tv_usec;
 }
 
+// make yield if target latency end
 void my_yield() {
     uint64_t current_time = GetTimeStamp();
     if (current_time >= yield_time + coro_target_latency) {
@@ -32,6 +35,7 @@ void my_yield() {
     }
 }
 
+// part of quick sort
 int partition(int *arr, int low, int high) {
     int pivot = arr[high];
     int i = low - 1;
@@ -50,6 +54,7 @@ int partition(int *arr, int low, int high) {
     return i;
 }
 
+// quick sort implementation
 void sort(int *arr, int low, int high) {
     if (low < high) {
         int pi = partition(arr, low, high);
@@ -59,6 +64,7 @@ void sort(int *arr, int low, int high) {
     }
 }
 
+// read data from file
 void read_file(int **arrays, int array_i, char *filename, int *size) {
     FILE *file;
     file = fopen(filename, "r");
@@ -76,6 +82,8 @@ void read_file(int **arrays, int array_i, char *filename, int *size) {
     *size = i;
     fclose(file);
 }
+
+// coroutine function
 // char **filenames, int *current_file_i, int files_amount, int **arrays, int *sizes
 int worker(void *context) {
     arguments *args = context;
@@ -90,6 +98,7 @@ int worker(void *context) {
     return 0;
 }
 
+// write output data
 void write_file(int *arr, int n) {
     FILE *file;
     file = fopen("output.txt", "w");
@@ -99,6 +108,7 @@ void write_file(int *arr, int n) {
     fclose(file);
 }
 
+// merge sorted arrays
 void merge(int *arrays[], int *sizes, int n) {
     int total_size = 0;
     int iterators[n];
@@ -133,6 +143,7 @@ void merge(int *arrays[], int *sizes, int n) {
 
 int main(int argc, char *argv[]) {
     uint64_t start_time = GetTimeStamp();
+    // take data from system arguments
     int cor_nums = 3;
     int target_latency = 50;
     char **filenames = calloc(argc - 1, sizeof(int*));
@@ -147,6 +158,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // initialize input and output data for coroutines
     coro_target_latency = target_latency / cor_nums;
     int current_file_i = 0;
     int sizes[files_amount];
@@ -157,26 +169,33 @@ int main(int argc, char *argv[]) {
 
     coro_sched_init();
 
+    // collect arguments for coroutines
     arguments worker_args = {filenames, &current_file_i, files_amount, arrays, sizes};
 
+    // set time and start coroutines
     yield_time = GetTimeStamp();
     uint64_t coro_start_time = GetTimeStamp();
     for (int i = 0; i < cor_nums; ++i) {
         coro_new(worker, &worker_args);
     }
 
+    // wait the end of coroutines and delete their
     struct coro *c;
     while ((c = coro_sched_wait()) != NULL) {
-        printf("Coroutine finished. Its switch count: %lld , work time: %lu\n",
+        printf("Coroutine finished. Its switch count: %lld , work time: %lu mcs\n",
                coro_switch_count(c), GetTimeStamp() - coro_start_time);
         coro_delete(c);
     }
 
-    merge(arrays, sizes, argc - 1);
+    // merge data
+    merge(arrays, sizes, files_amount);
     printf("All files merged in output.txt\n");
+
+    // free space of calloc
     for (int i = 0; i < files_amount; i++) {
         free(arrays[i]);
     }
+
     printf("Total work time: %lu mcs", GetTimeStamp() - start_time);
     return 0;
 }
