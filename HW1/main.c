@@ -24,10 +24,9 @@ uint64_t GetTimeStamp() {
 }
 
 void my_yield() {
-//    printf("%d\n", GetTimeStamp());
     uint64_t current_time = GetTimeStamp();
     if (current_time >= yield_time + coro_target_latency) {
-        printf("Yield at timestamp: %lu\n", current_time);
+//        printf("Yield at timestamp: %lu\n", current_time);
         yield_time = current_time;
         coro_yield();
     }
@@ -60,7 +59,7 @@ void sort(int *arr, int low, int high) {
     }
 }
 
-void read_file(int *arr, char *filename, int *size) {
+void read_file(int **arrays, int array_i, char *filename, int *size) {
     FILE *file;
     file = fopen(filename, "r");
     if (file == NULL) {
@@ -70,9 +69,9 @@ void read_file(int *arr, char *filename, int *size) {
     int i = 0;
     while(!feof(file)) {
         if (i > 0 && i % 10 == 0) {
-            arr = realloc(arr, (i + 10) * sizeof(int));
+            arrays[array_i] = realloc(arrays[array_i], (i + 10) * sizeof(int));
         }
-        fscanf(file, "%d", &arr[i++]);
+        fscanf(file, "%d", &arrays[array_i][i++]);
     }
     *size = i;
     fclose(file);
@@ -83,7 +82,8 @@ int worker(void *context) {
     while (1) {
         int current_i = (*args->current_file_i)++;
         if (current_i >= args->files_amount) break;
-        read_file(args->arrays[current_i], args->filenames[current_i], &args->sizes[current_i]);
+        read_file(args->arrays, current_i, args->filenames[current_i], &args->sizes[current_i]);
+        printf("%s file read\n", args->filenames[current_i]);
         sort(args->arrays[current_i], 0, args->sizes[current_i] - 1);
         printf("%s file sorted\n", args->filenames[current_i]);
     }
@@ -148,7 +148,6 @@ int main(int argc, char *argv[]) {
     }
 
     coro_target_latency = target_latency / cor_nums;
-    long long total_switch_time = 0;
     int current_file_i = 0;
     int sizes[files_amount];
     int *arrays[files_amount];
@@ -161,14 +160,15 @@ int main(int argc, char *argv[]) {
     arguments worker_args = {filenames, &current_file_i, files_amount, arrays, sizes};
 
     yield_time = GetTimeStamp();
+    uint64_t coro_start_time = GetTimeStamp();
     for (int i = 0; i < cor_nums; ++i) {
         coro_new(worker, &worker_args);
     }
 
     struct coro *c;
     while ((c = coro_sched_wait()) != NULL) {
-        printf("Coroutine finished. Its switch count: %lld\n", coro_switch_count(c));
-        total_switch_time += coro_switch_count(c);
+        printf("Coroutine finished. Its switch count: %lld , work time: %lu\n",
+               coro_switch_count(c), GetTimeStamp() - coro_start_time);
         coro_delete(c);
     }
 
@@ -177,7 +177,6 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < files_amount; i++) {
         free(arrays[i]);
     }
-    printf("Total switch count: %lld\n", total_switch_time);
     printf("Total work time: %lu mcs", GetTimeStamp() - start_time);
     return 0;
 }
