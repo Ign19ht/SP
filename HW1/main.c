@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
-#include <stdint-gcc.h>
 #include "libcoro.h"
 #include "limits.h"
 #include "string.h"
@@ -15,19 +14,19 @@ typedef struct arguments {
     int *sizes;
 }arguments;
 
-static uint64_t yield_time; // timestamp of last yield
+static u_int64_t yield_time; // timestamp of last yield
 static int coro_target_latency; // target latency / number of coroutines
 
 // get current timestamp in microseconds
-uint64_t GetTimeStamp() {
+u_int64_t GetTimeStamp() {
     struct timeval tv;
     gettimeofday(&tv,NULL);
-    return tv.tv_sec*(uint64_t)1000000+tv.tv_usec;
+    return tv.tv_sec*(u_int64_t)1000000+tv.tv_usec;
 }
 
 // make yield if target latency end
 void my_yield() {
-    uint64_t current_time = GetTimeStamp();
+    u_int64_t current_time = GetTimeStamp();
     if (current_time >= yield_time + coro_target_latency) {
 //        printf("Yield at timestamp: %lu\n", current_time);
         yield_time = current_time;
@@ -142,7 +141,7 @@ void merge(int *arrays[], int *sizes, int n) {
 
 
 int main(int argc, char *argv[]) {
-    uint64_t start_time = GetTimeStamp();
+    u_int64_t start_time = GetTimeStamp();
     // take data from system arguments
     int cor_nums = 3;
     int target_latency = 50;
@@ -174,7 +173,7 @@ int main(int argc, char *argv[]) {
 
     // set time and start coroutines
     yield_time = GetTimeStamp();
-    uint64_t coro_start_time = GetTimeStamp();
+    u_int64_t coro_start_time = GetTimeStamp();
     for (int i = 0; i < cor_nums; ++i) {
         coro_new(worker, &worker_args);
     }
