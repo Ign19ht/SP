@@ -4,3 +4,4 @@ project(SP C)
 set(CMAKE_C_STANDARD 23)
 
 add_executable(SP HW1/main.c HW1/libcoro.c)
+add_executable(HW2 HW2/main.c)
