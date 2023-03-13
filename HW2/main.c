@@ -1,5 +1,11 @@
 #include <malloc.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+
+#define WRITE_END 1
+#define READ_END 0
 
 typedef struct cmd {
     char *name;
@@ -18,7 +24,6 @@ void free_cmd(cmd **commands, int cmd_size) {
         }
         free(command->argv);
         free(command->out);
-        free(command->name);
         free(command);
     }
     free(commands);
@@ -170,16 +175,74 @@ char *get_line() {
 }
 
 
-int main(int argc, char *argv[]) {
-    char* line = get_line();
-    printf("%s", line);
-    int c;
-    cmd **commands = parser(line, &c);
-    char *args[commands[0]->argc + 1];
-    int i = 0;
-    for (i; i < commands[0]->argc; i++) {
-        args[i] = commands[0]->argv[i];
+void child_work(int child, cmd *command, int *pipe1, int *pipe2, int out) {
+    if(child == 0)
+    {
+        if (pipe1) {
+            close(pipe1[WRITE_END]);
+            dup2(pipe1[READ_END], STDIN_FILENO);
+        }
+        if (pipe2) {
+            close(pipe2[READ_END]);
+            dup2(pipe2[WRITE_END], STDOUT_FILENO);
+        }
+        if (out) {
+            dup2(out, STDOUT_FILENO);
+        }
+
+        execvp(command->name, command->argv);
+
+        printf("%s failed.\n", command->name);
+        exit(EXIT_FAILURE);
     }
-    args[i] = NULL;
-    execvp(commands[0]->name, args);
+}
+
+
+int main(int argc, char *argv[]) {
+    for (;;) {
+        char *line = get_line();
+        int c;
+        cmd **commands = parser(line, &c);
+
+        int fd[c - 1][2];
+        for (int i = 0; i < c - 1; i++) {
+            pipe(fd[i]);
+        }
+
+        int child[c];
+        for (int i = 0; i < c; i++) {
+            int *pipe1 = NULL;
+            int *pipe2 = NULL;
+            int out = 0;
+            if (i > 0 && c > 1) {
+                pipe1 = fd[i - 1];
+            }
+            if (i < c - 1) {
+                pipe2 = fd[i];
+            }
+            if (commands[i]->out) {
+                if (commands[i]->rewrite) {
+                    out = open(commands[i]->out, O_CREAT| O_WRONLY | O_TRUNC);
+                }
+                else {
+                    out = open(commands[i]->out, O_CREAT | O_WRONLY | O_APPEND);
+                }
+            }
+            child[i] = fork();
+            child_work(child[i], commands[i], pipe1, pipe2, out);
+            if (out) close(out);
+        }
+
+        for (int i = 0; i < c - 1; i++) {
+            close(fd[i][READ_END]);
+            close(fd[i][WRITE_END]);
+        }
+
+        int status;
+        for (int i = 0; i < c; i++) {
+            waitpid(child[i], &status, 0);
+        }
+        free_cmd(commands, c);
+        free(line);
+    }
 }
