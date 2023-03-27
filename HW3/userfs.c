@@ -329,7 +329,7 @@ ufs_resize(int fd, size_t new_size) {
         }
         file->block_count--;
         filedesc->current_block = file->last_block;
-        filedesc->offset = BLOCK_SIZE;
+        filedesc->offset = file->last_block->occupied;
     }
 
     return 0;
