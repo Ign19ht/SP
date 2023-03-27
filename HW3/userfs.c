@@ -198,6 +198,7 @@ ufs_write(int fd, const char *buf, size_t size) {
             }
 
             filedesc->current_block = add_block(file);
+            filedesc->offset = 0;
         }
         ssize_t size_write = BLOCK_SIZE - filedesc->offset;
         if (size_write <= 0) {
