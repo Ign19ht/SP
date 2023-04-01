@@ -1,5 +1,5 @@
 #include "userfs.h"
-#include <malloc.h>
+#include "stdlib.h"
 #include <string.h>
 
 enum {
@@ -51,6 +51,7 @@ struct filedesc {
     struct file *file;
     /* PUT HERE OTHER MEMBERS */
     struct block *current_block;
+    int id_current_block;
     int offset;
     int permission;
 };
@@ -116,6 +117,8 @@ void free_file(struct file *file) {
         if (current_block->prev) free(current_block->prev);
         current_block = current_block->next;
     }
+    if (file->last_block) free(file->last_block);
+    free(file->name);
     free(file);
 }
 
@@ -164,6 +167,8 @@ ufs_open(const char *filename, int flags) {
     file_descriptors[fd]->file = current_file;
     file_descriptors[fd]->file->refs++;
     file_descriptors[fd]->current_block = current_file->block_list;
+    if (file_descriptors[fd]->current_block) file_descriptors[fd]->id_current_block = 0;
+    else file_descriptors[fd]->id_current_block = -1;
     file_descriptors[fd]->offset = 0;
     file_descriptors[fd]->permission = permission;
 
@@ -186,7 +191,10 @@ ufs_write(int fd, const char *buf, size_t size) {
         return -1;
     }
 
-    if (!filedesc->current_block && file->block_list) filedesc->current_block = file->block_list;
+    if (!filedesc->current_block && file->block_list) {
+        filedesc->current_block = file->block_list;
+        filedesc->id_current_block++;
+    }
 
     ssize_t writen_size = 0;
     for (;;) {
@@ -199,11 +207,13 @@ ufs_write(int fd, const char *buf, size_t size) {
 
             filedesc->current_block = add_block(file);
             filedesc->offset = 0;
+            filedesc->id_current_block = file->block_count - 1;
         }
         ssize_t size_write = BLOCK_SIZE - filedesc->offset;
         if (size_write <= 0) {
             filedesc->current_block = filedesc->current_block->next;
             filedesc->offset = 0;
+            filedesc->id_current_block++;
             continue;
         }
         if (size_write > size - writen_size) size_write = size - writen_size;
@@ -231,7 +241,10 @@ ufs_read(int fd, char *buf, size_t size) {
         return -1;
     }
 
-    if (!filedesc->current_block && filedesc->file->block_list) filedesc->current_block = filedesc->file->block_list;
+    if (!filedesc->current_block && filedesc->file->block_list) {
+        filedesc->current_block = filedesc->file->block_list;
+        filedesc->id_current_block++;
+    }
 
     ssize_t read_size = 0;
     for (;;) {
@@ -241,6 +254,7 @@ ufs_read(int fd, char *buf, size_t size) {
         if (block_read_size <= 0) {
             filedesc->current_block = filedesc->current_block->next;
             filedesc->offset = 0;
+            filedesc->id_current_block++;
             continue;
         }
         if (block_read_size > size - read_size) block_read_size = size - read_size;
@@ -311,25 +325,48 @@ ufs_resize(int fd, size_t new_size) {
 
     int new_block_count = new_size / BLOCK_SIZE;
     if (new_size % BLOCK_SIZE > 0) new_block_count++;
+    int current_block_count = file->block_count;
 
-    for (int i = file->block_count; i < new_block_count; i++) {
-        add_block(file);
-    }
-    for (int i = new_block_count; i < file->block_count; i++) {
-        if (file->last_block->prev) {
-            file->last_block = file->last_block->prev;
-            free(file->last_block->next->memory);
-            free(file->last_block->next);
-            file->last_block->next = NULL;
-        } else {
-            free(file->last_block->memory);
-            free(file->last_block);
-            file->last_block = NULL;
-            file->block_list = NULL;
+    if (new_block_count >= current_block_count) {
+        for (int i = file->block_count; i < new_block_count; i++) {
+            add_block(file);
         }
-        file->block_count--;
-        filedesc->current_block = file->last_block;
-        filedesc->offset = file->last_block->occupied;
+    } else {
+        for (int i = new_block_count; i < current_block_count; i++) {
+            if (file->last_block->prev) {
+                file->last_block = file->last_block->prev;
+                free(file->last_block->next->memory);
+                free(file->last_block->next);
+                file->last_block->next = NULL;
+            } else {
+                free(file->last_block->memory);
+                free(file->last_block);
+                file->last_block = NULL;
+                file->block_list = NULL;
+            }
+            file->block_count--;
+        }
+
+        int rem = new_size % BLOCK_SIZE;
+        if (rem == 0 && new_size != 0) rem += BLOCK_SIZE;
+        if (file->last_block) file->last_block->occupied = rem;
+
+        for (int i = 0; i < file_descriptor_capacity; i++) {
+            if (file_descriptors[i]) {
+                if (file_descriptors[i]->file == file) {
+                    if (file_descriptors[i]->id_current_block >= file->block_count) {
+                        file_descriptors[i]->current_block = file->last_block;
+                        file_descriptors[i]->id_current_block = file->block_count - 1;
+                    }
+                    if (file_descriptors[i]->id_current_block == file->block_count - 1) {
+                        if (file->last_block) {
+                            if (file_descriptors[i]->offset > file->last_block->occupied)
+                                file_descriptors[i]->offset = file->last_block->occupied;
+                        } else file_descriptors[i]->offset = 0;
+                    }
+                }
+            }
+        }
     }
 
     return 0;
