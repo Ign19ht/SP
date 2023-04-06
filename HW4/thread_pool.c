@@ -1,7 +1,5 @@
 #include "thread_pool.h"
 #include <pthread.h>
-#include <string.h>
-#include <stdio.h>
 #include "stdlib.h"
 #include <stdatomic.h>
 
@@ -17,6 +15,7 @@ struct thread_task {
 
     /* PUT HERE OTHER MEMBERS */
     atomic_int status;
+    atomic_bool detach;
     struct thread_task *next;
     void *result;
 };
@@ -38,6 +37,12 @@ struct thread_pool {
     pthread_mutex_t status_lock;
     int *threads_status;
 };
+
+double get_time() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec/1000000000;
+}
 
 void queue_push(struct queue *queue, struct thread_task *task) {
     if (queue->size == 0) {
@@ -64,7 +69,7 @@ struct thread_args {
 
 void *thread_func(void *arguments) {
     struct thread_args *args = (struct thread_args*) arguments;
-    printf("%p\n", arguments);
+
     pthread_mutex_lock(&args->pool->status_lock);
     args->pool->threads_status[args->thread_id] = 1;
     args->pool->thread_count++;
@@ -72,7 +77,6 @@ void *thread_func(void *arguments) {
 
     for (;;) {
         pthread_mutex_lock(&args->pool->queue_lock);
-//        printf("size %d: %d\n", args->thread_id, args->pool->task_queue->size);
         if (args->pool->task_queue->size == 0) {
             pthread_mutex_unlock(&args->pool->queue_lock);
             break;
@@ -83,12 +87,15 @@ void *thread_func(void *arguments) {
         task->status = TPOOL_STATUS_RUNNING;
         task->result = task->function(task->arg);
         task->status = TPOOL_STATUS_FINISHED;
+        if (task->detach) free(task);
     }
 
     pthread_mutex_lock(&args->pool->status_lock);
     args->pool->threads_status[args->thread_id] = 0;
     args->pool->thread_count--;
     pthread_mutex_unlock(&args->pool->status_lock);
+
+    free(arguments);
     return NULL;
 }
 
@@ -123,6 +130,7 @@ thread_pool_delete(struct thread_pool *pool) {
     free(pool->threads_status);
     free(pool->threads);
     pthread_mutex_destroy(&pool->queue_lock);
+    pthread_mutex_destroy(&pool->status_lock);
     free(pool);
     return 0;
 }
@@ -137,9 +145,10 @@ thread_pool_push_task(struct thread_pool *pool, struct thread_task *task) {
     if (pool->thread_count == pool->max_thread_count) return 0;
     for (int i = 0; i < pool->max_thread_count; i++) {
         if (pool->threads_status[i] == 0) {
-            struct thread_args args = {.pool = pool, .thread_id = i};
-            printf("%p\n", &args);
-            pthread_create(&pool->threads[i], NULL, thread_func, (void *)&args);
+            struct thread_args *args = malloc(sizeof(struct thread_args));
+            args->pool = pool;
+            args->thread_id = i;
+            pthread_create(&pool->threads[i], NULL, thread_func, (void *)args);
             break;
         }
     }
@@ -152,6 +161,7 @@ thread_task_new(struct thread_task **task, thread_task_f function, void *arg) {
     (*task)->function = function;
     (*task)->arg = arg;
     (*task)->status = 0;
+    (*task)->detach = false;
     return 0;
 }
 
@@ -166,12 +176,13 @@ thread_task_is_running(const struct thread_task *task) {
 }
 
 int
-thread_task_join(struct thread_task *task, void **result) {
+thread_task_join(struct thread_task *task, double timeout, void **result) {
     if (task->status == 0) return TPOOL_ERR_TASK_NOT_PUSHED;
+    double start = get_time();
     for (;;) {
+        if (get_time() - start > timeout) return TPOOL_ERR_TIMEOUT;
         if (task->status == TPOOL_STATUS_FINISHED) {
             task->status = 0;
-//            memcpy(*result, task->result, sizeof(task->result));
             *result = task->result;
             return 0;
         }
@@ -190,8 +201,10 @@ thread_task_delete(struct thread_task *task) {
 int
 thread_task_detach(struct thread_task *task)
 {
-    /* IMPLEMENT THIS FUNCTION */
-    return TPOOL_ERR_NOT_IMPLEMENTED;
+    if (task->status == 0) return TPOOL_ERR_TASK_NOT_PUSHED;
+    if (task->status == TPOOL_STATUS_FINISHED) free(task);
+    else task->detach = true;
+    return 0;
 }
 
 #endif

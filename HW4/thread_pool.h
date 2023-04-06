@@ -2,6 +2,8 @@
 #ifndef THREAD_POOL_DEFINED
 #define THREAD_POOL_DEFINED
 
+#define NEED_DETACH
+
 struct thread_pool;
 struct thread_task;
 
@@ -18,6 +20,7 @@ enum thread_poool_errcode {
 	TPOOL_ERR_HAS_TASKS,
 	TPOOL_ERR_TASK_NOT_PUSHED,
 	TPOOL_ERR_TASK_IN_POOL,
+    TPOOL_ERR_TIMEOUT,
 	TPOOL_ERR_NOT_IMPLEMENTED,
 };
 
@@ -108,7 +111,7 @@ thread_task_is_running(const struct thread_task *task);
  *     - TPOOL_ERR_TASK_NOT_PUSHED - task is not pushed to a pool.
  */
 int
-thread_task_join(struct thread_task *task, void **result);
+thread_task_join(struct thread_task *task, double timeout, void **result);
 
 /**
  * Delete a task, free its memory.
