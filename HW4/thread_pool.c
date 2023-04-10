@@ -71,8 +71,7 @@ void *thread_func(void *arguments) {
     struct thread_args *args = (struct thread_args*) arguments;
 
     pthread_mutex_lock(&args->pool->status_lock);
-    args->pool->threads_status[args->thread_id] = 1;
-    args->pool->thread_count++;
+    args->pool->threads_status[args->thread_id] = 2;
     pthread_mutex_unlock(&args->pool->status_lock);
 
     for (;;) {
@@ -91,8 +90,7 @@ void *thread_func(void *arguments) {
     }
 
     pthread_mutex_lock(&args->pool->status_lock);
-    args->pool->threads_status[args->thread_id] = 0;
-    args->pool->thread_count--;
+    args->pool->threads_status[args->thread_id] = 1;
     pthread_mutex_unlock(&args->pool->status_lock);
 
     free(arguments);
@@ -124,7 +122,7 @@ int
 thread_pool_delete(struct thread_pool *pool) {
     if (pool->task_queue->size > 0) return TPOOL_ERR_HAS_TASKS;
     for (int i = 0; i < pool->max_thread_count; i++) {
-        if (pool->threads_status[i] == 1) return TPOOL_ERR_HAS_TASKS;
+        if (pool->threads_status[i] == 2) return TPOOL_ERR_HAS_TASKS;
     }
     free(pool->task_queue);
     free(pool->threads_status);
@@ -142,9 +140,9 @@ thread_pool_push_task(struct thread_pool *pool, struct thread_task *task) {
     pthread_mutex_lock(&pool->queue_lock);
     queue_push(pool->task_queue, task);
     pthread_mutex_unlock(&pool->queue_lock);
-    if (pool->thread_count == pool->max_thread_count) return 0;
     for (int i = 0; i < pool->max_thread_count; i++) {
-        if (pool->threads_status[i] == 0) {
+        if (pool->threads_status[i] < 2) {
+            if (pool->threads_status[i] == 0) pool->thread_count++;
             struct thread_args *args = malloc(sizeof(struct thread_args));
             args->pool = pool;
             args->thread_id = i;
@@ -191,7 +189,7 @@ thread_task_join(struct thread_task *task, double timeout, void **result) {
 
 int
 thread_task_delete(struct thread_task *task) {
-    if (task->status == TPOOL_STATUS_IN_POOL || task->status == TPOOL_STATUS_RUNNING) return TPOOL_ERR_TASK_IN_POOL;
+    if (task->status != 0) return TPOOL_ERR_TASK_IN_POOL;
     free(task);
     return 0;
 }
