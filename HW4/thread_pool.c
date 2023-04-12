@@ -107,8 +107,8 @@ thread_pool_new(int max_thread_count, struct thread_pool **pool) {
     (*pool)->thread_count = 0;
     (*pool)->threads = calloc(max_thread_count, sizeof(pthread_t));
     (*pool)->threads_status = calloc(max_thread_count, sizeof(int));
-    (*pool)->queue_lock = PTHREAD_MUTEX_DEFAULT;
-    (*pool)->status_lock = PTHREAD_MUTEX_DEFAULT;
+    pthread_mutex_init(&(*pool)->queue_lock, NULL);
+    pthread_mutex_init(&(*pool)->status_lock, NULL);
     for (int i = 0; i < max_thread_count; i++) (*pool)->threads_status[i] = 0;
     return 0;
 }
