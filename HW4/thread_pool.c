@@ -3,6 +3,7 @@
 #include "stdlib.h"
 #include <stdatomic.h>
 #include <math.h>
+#include <errno.h>
 
 enum {
     TPOOL_STATUS_IN_POOL = 1,
@@ -36,7 +37,8 @@ struct thread_pool {
     int max_thread_count;
     struct queue *task_queue;
     int thread_count;
-    int *threads_status;
+//    int *threads_status;
+    atomic_int *threads_status;
     atomic_int task_count;
     pthread_mutex_t queue_lock;
     pthread_mutex_t status_lock;
@@ -68,9 +70,10 @@ struct thread_args {
 void *thread_func(void *arguments) {
     struct thread_args *args = (struct thread_args *) arguments;
 
-    pthread_mutex_lock(&args->pool->status_lock);
-    args->pool->threads_status[args->thread_id] = 2;
-    pthread_mutex_unlock(&args->pool->status_lock);
+//    pthread_mutex_lock(&args->pool->status_lock);
+//    args->pool->threads_status[args->thread_id] = 2;
+//    pthread_mutex_unlock(&args->pool->status_lock);
+    atomic_store(args->pool->threads_status + args->thread_id, 2);
 
     for (;;) {
         pthread_mutex_lock(&args->pool->queue_lock);
@@ -93,9 +96,10 @@ void *thread_func(void *arguments) {
         }
     }
 
-    pthread_mutex_lock(&args->pool->status_lock);
-    args->pool->threads_status[args->thread_id] = 1;
-    pthread_mutex_unlock(&args->pool->status_lock);
+//    pthread_mutex_lock(&args->pool->status_lock);
+//    args->pool->threads_status[args->thread_id] = 1;
+//    pthread_mutex_unlock(&args->pool->status_lock);
+    atomic_store(args->pool->threads_status + args->thread_id, 1);
 
     free(arguments);
     return NULL;
@@ -110,11 +114,13 @@ thread_pool_new(int max_thread_count, struct thread_pool **pool) {
     (*pool)->task_queue->size = 0;
     (*pool)->thread_count = 0;
     (*pool)->threads = calloc(max_thread_count, sizeof(pthread_t));
-    (*pool)->threads_status = calloc(max_thread_count, sizeof(int));
+//    (*pool)->threads_status = calloc(max_thread_count, sizeof(int));
+    (*pool)->threads_status = calloc(max_thread_count, sizeof(atomic_int));
     pthread_mutex_init(&(*pool)->queue_lock, NULL);
     pthread_mutex_init(&(*pool)->status_lock, NULL);
     atomic_init(&(*pool)->task_count, 0);
-    for (int i = 0; i < max_thread_count; i++) (*pool)->threads_status[i] = 0;
+//    for (int i = 0; i < max_thread_count; i++) (*pool)->threads_status[i] = 0;
+    for (int i = 0; i < max_thread_count; i++) atomic_init((*pool)->threads_status + i, 0);
     return 0;
 }
 
@@ -144,10 +150,13 @@ thread_pool_push_task(struct thread_pool *pool, struct thread_task *task) {
     queue_push(pool->task_queue, task);
     pthread_mutex_unlock(&pool->queue_lock);
 
-    pthread_mutex_lock(&pool->status_lock);
+//    pthread_mutex_lock(&pool->status_lock);
     for (int i = 0; i < pool->max_thread_count; i++) {
-        if (pool->threads_status[i] < 2) {
-            if (pool->threads_status[i] == 0) pool->thread_count++;
+//        if (pool->threads_status[i] < 2) {
+//            if (pool->threads_status[i] == 0) pool->thread_count++;
+        int status = atomic_load(pool->threads_status + i);
+        if (status < 2) {
+            if (status == 0) pool->thread_count++;
             struct thread_args *args = malloc(sizeof(struct thread_args));
             args->pool = pool;
             args->thread_id = i;
@@ -155,7 +164,7 @@ thread_pool_push_task(struct thread_pool *pool, struct thread_task *task) {
             break;
         }
     }
-    pthread_mutex_unlock(&pool->status_lock);
+//    pthread_mutex_unlock(&pool->status_lock);
     return 0;
 }
 
