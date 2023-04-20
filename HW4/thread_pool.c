@@ -86,9 +86,13 @@ void *thread_func(void *arguments) {
 
         atomic_store(&task->status, TPOOL_STATUS_RUNNING);
         task->result = task->function(task->arg);
+        atomic_fetch_sub(&args->pool->task_count, 1);
+
+        pthread_mutex_lock(&task->mutex);
         atomic_store(&task->status, TPOOL_STATUS_FINISHED);
         pthread_cond_broadcast(&task->is_finish);
-        atomic_fetch_sub(&args->pool->task_count, 1);
+        pthread_mutex_unlock(&task->mutex);
+
 
         if (atomic_load(&task->detach)) {
             atomic_store(&task->status, 0);
@@ -197,9 +201,10 @@ thread_task_join(struct thread_task *task, void **result) {
     pthread_mutex_lock(&task->mutex);
     if (atomic_load(&task->status) != TPOOL_STATUS_FINISHED)
         pthread_cond_wait(&task->is_finish, &task->mutex);
+    pthread_mutex_unlock(&task->mutex);
+
     atomic_store(&task->status, 0);
     *result = task->result;
-    pthread_mutex_unlock(&task->mutex);
     return 0;
 }
 
@@ -233,9 +238,10 @@ thread_task_timed_join(struct thread_task *task, double timeout, void **result) 
         pthread_mutex_unlock(&task->mutex);
         return TPOOL_ERR_TIMEOUT;
     }
+    pthread_mutex_unlock(&task->mutex);
+
     atomic_store(&task->status, 0);
     *result = task->result;
-    pthread_mutex_unlock(&task->mutex);
 
     return 0;
 }
