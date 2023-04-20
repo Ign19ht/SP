@@ -165,6 +165,7 @@ thread_pool_push_task(struct thread_pool *pool, struct thread_task *task) {
             args->pool = pool;
             args->thread_id = i;
             pthread_create(&pool->threads[i], NULL, thread_func, (void *) args);
+            pthread_detach(pool->threads[i]);
             break;
         }
     }
