@@ -4,6 +4,7 @@
 #include <stdatomic.h>
 #include <math.h>
 #include <errno.h>
+#include <unistd.h>
 
 enum {
     TPOOL_STATUS_IN_POOL = 1,
