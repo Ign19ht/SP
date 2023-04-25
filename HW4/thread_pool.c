@@ -89,16 +89,15 @@ void *thread_func(void *arguments) {
         task->result = task->function(task->arg);
         atomic_fetch_sub(&args->pool->task_count, 1);
 
-        pthread_mutex_lock(&task->mutex);
-        atomic_store(&task->status, TPOOL_STATUS_FINISHED);
-        pthread_cond_broadcast(&task->is_finish);
-        pthread_mutex_unlock(&task->mutex);
-
-
-        if (atomic_load(&task->detach)) {
-            atomic_store(&task->status, 0);
-            thread_task_delete(task);
-        }
+	if (atomic_load(&task->detach)) {
+	    atomic_store(&task->status, 0);
+	    thread_task_delete(task);
+	} else {
+	    pthread_mutex_lock(&task->mutex);
+	    atomic_store(&task->status, TPOOL_STATUS_FINISHED);
+	    pthread_cond_broadcast(&task->is_finish);
+	    pthread_mutex_unlock(&task->mutex);
+	}
     }
 
 //    pthread_mutex_lock(&args->pool->status_lock);
@@ -235,14 +234,13 @@ thread_task_timed_join(struct thread_task *task, double timeout, void **result) 
     ts.tv_sec += int_part;
     ts.tv_nsec += nano_part;
 
-    int rc;
+    int rc = 0;
     if (atomic_load(&task->status) != TPOOL_STATUS_FINISHED)
         rc = pthread_cond_timedwait(&task->is_finish, &task->mutex, &ts);
+    pthread_mutex_unlock(&task->mutex);
     if (rc != 0) {
-        pthread_mutex_unlock(&task->mutex);
         return TPOOL_ERR_TIMEOUT;
     }
-    pthread_mutex_unlock(&task->mutex);
 
     atomic_store(&task->status, 0);
     *result = task->result;
@@ -258,6 +256,8 @@ int
 thread_task_detach(struct thread_task *task) {
     if (atomic_load(&task->status) == 0) return TPOOL_ERR_TASK_NOT_PUSHED;
     if (atomic_load(&task->status) == TPOOL_STATUS_FINISHED) {
+	pthread_mutex_lock(&task->mutex);
+	pthread_mutex_unlock(&task->mutex);
         atomic_store(&task->status, 0);
         thread_task_delete(task);
     }
