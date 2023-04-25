@@ -227,12 +227,18 @@ thread_task_timed_join(struct thread_task *task, double timeout, void **result) 
 
     pthread_mutex_lock(&task->mutex);
 
+    struct timeval now;
     struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
+    gettimeofday(&now, 0);
+
+//    struct timespec ts;
+//    clock_gettime(CLOCK_REALTIME, &ts);
     time_t int_part;
     long nano_part = modf(timeout, &int_part) * 1000000000;
-    ts.tv_sec += int_part;
-    ts.tv_nsec += nano_part;
+    ts.tv_sec = now.tv_sec + int_part;      // 2 sec
+    ts.tv_nsec = now.tv_usec * 1000 + nano_part; // nsec
+//    ts.tv_sec += int_part;
+//    ts.tv_nsec += nano_part;
 
     int rc = 0;
     if (atomic_load(&task->status) != TPOOL_STATUS_FINISHED)
