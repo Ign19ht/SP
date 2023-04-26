@@ -13,7 +13,7 @@ typedef struct cmd {
 	int argc;
 	char *out;
 	int rewrite;
-}cmd;
+} cmd;
 
 
 void free_cmd(cmd **commands, int cmd_size) {
@@ -30,7 +30,7 @@ void free_cmd(cmd **commands, int cmd_size) {
 }
 
 
-void append_arg(cmd *command, char* arg) {
+void append_arg(cmd *command, char *arg) {
 	if (command->argc == 0) {
 		command->argv = malloc(sizeof(char));
 	} else {
@@ -39,7 +39,7 @@ void append_arg(cmd *command, char* arg) {
 	command->argv[command->argc++] = arg;
 }
 
-char *get_arg(char* line, int i_start, int i_end) {
+char *get_arg(char *line, int i_start, int i_end) {
 	char *arg = calloc(i_end - i_start + 1, sizeof(char));
 	int i = 0;
 	int line_i = i_start;
@@ -49,7 +49,8 @@ char *get_arg(char* line, int i_start, int i_end) {
 
 		if (line_i - 1 == i_start && (c == '"' || c == '\'')) continue;
 		if (i > 0 && line[line_i - 2] == '\\' && c == '\\') continue;
-		if (line_i - 1 == i_end - 1 && ((line[i_start] == '"' || line[i_start] == '\'') && line[i_start] == line[i_end - 1]))
+		if (line_i - 1 == i_end - 1 &&
+			((line[i_start] == '"' || line[i_start] == '\'') && line[i_start] == line[i_end - 1]))
 			continue;
 		arg[i++] = c;
 	}
@@ -57,7 +58,7 @@ char *get_arg(char* line, int i_start, int i_end) {
 	return arg;
 }
 
-cmd ** parser(char *line, int *command_counter) {
+cmd **parser(char *line, int *command_counter) {
 	int cmd_id = 0;
 	int c_index = 0;
 	int arg_start = 0;
@@ -73,29 +74,8 @@ cmd ** parser(char *line, int *command_counter) {
 	for (;;) {
 		char current = line[c_index];
 
-		if (current == '>') {
-			is_out = 1;
-			is_rewrite = 1;
-		c_index++;
-		if (line[c_index] == '>') {
-		is_rewrite = 0;
-		c_index++;
-		}
-			arg_start = c_index;
-			continue;
-		}
-
-		if (current == '|') {
-			commands = realloc(commands, sizeof(cmd) * (++cmd_id + 1));
-			commands[cmd_id] = malloc(sizeof(cmd));
-			commands[cmd_id]->argc = 0;
-			has_name = 0;
-			c_index++;
-			arg_start = c_index;
-			continue;
-		}
-
 		int is_com = (c_index > 0 && line[c_index - 1] == '\\') && !(c_index > 1 && line[c_index - 2] == '\\');
+		int is_end = current == '\0';
 
 		if ((current == '"' || current == '\'') && !is_com) {
 			if (is_text) {
@@ -106,9 +86,7 @@ cmd ** parser(char *line, int *command_counter) {
 			}
 		}
 
-		int is_end = current == '\0';
-
-		if ((!is_text && current == ' ' && !is_com) || is_end) {
+		if ((!is_text && (current == ' ' || current == '>' || current == '|') && !is_com) || is_end) {
 			if (arg_start < c_index) {
 				char *arg = get_arg(line, arg_start, c_index);
 				if (is_out) {
@@ -126,6 +104,28 @@ cmd ** parser(char *line, int *command_counter) {
 			arg_start = c_index + 1;
 		}
 
+		if (current == '>' && !is_com && !is_text) {
+			is_out = 1;
+			is_rewrite = 1;
+			c_index++;
+			if (line[c_index] == '>') {
+				is_rewrite = 0;
+				c_index++;
+			}
+			arg_start = c_index;
+			continue;
+		}
+
+		if (current == '|' && !is_com && !is_text) {
+			commands = realloc(commands, sizeof(cmd) * (++cmd_id + 1));
+			commands[cmd_id] = malloc(sizeof(cmd));
+			commands[cmd_id]->argc = 0;
+			has_name = 0;
+			c_index++;
+			arg_start = c_index;
+			continue;
+		}
+
 		if (is_end) break;
 		c_index++;
 	}
@@ -134,7 +134,7 @@ cmd ** parser(char *line, int *command_counter) {
 }
 
 char *get_line() {
-	char* line = calloc(10, sizeof(char));
+	char *line = calloc(10, sizeof(char));
 	int i = 0;
 	int len_max = 10;
 	char c;
@@ -176,8 +176,7 @@ char *get_line() {
 
 
 void child_work(int child, cmd *command, int *pipe1, int *pipe2, int out) {
-	if(child == 0)
-	{
+	if (child == 0) {
 		if (pipe1) {
 			close(pipe1[WRITE_END]);
 			dup2(pipe1[READ_END], STDIN_FILENO);
@@ -204,6 +203,12 @@ int main(int argc, char *argv[]) {
 		int c;
 		cmd **commands = parser(line, &c);
 
+		for (int i = 0; i < c; i++) {
+			printf("\n%s %d %s %d\n", commands[i]->name, commands[i]->argc, commands[i]->out, commands[i]->rewrite);
+			for (int j = 0; j < commands[i]->argc; j++) {
+				printf("argv %s\n", commands[i]->argv[j]);
+			}
+		}
 		int fd[c - 1][2];
 		for (int i = 0; i < c - 1; i++) {
 			pipe(fd[i]);
@@ -222,9 +227,8 @@ int main(int argc, char *argv[]) {
 			}
 			if (commands[i]->out) {
 				if (commands[i]->rewrite) {
-					out = open(commands[i]->out, O_CREAT| O_WRONLY | O_TRUNC);
-				}
-				else {
+					out = open(commands[i]->out, O_CREAT | O_WRONLY | O_TRUNC);
+				} else {
 					out = open(commands[i]->out, O_CREAT | O_WRONLY | O_APPEND);
 				}
 			}
