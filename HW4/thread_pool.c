@@ -87,7 +87,6 @@ void *thread_func(void *arguments) {
 
         atomic_store(&task->status, TPOOL_STATUS_RUNNING);
         task->result = task->function(task->arg);
-        atomic_fetch_sub(&args->pool->task_count, 1);
 
 	if (atomic_load(&task->detach)) {
 	    atomic_store(&task->status, 0);
@@ -98,6 +97,7 @@ void *thread_func(void *arguments) {
 	    pthread_cond_broadcast(&task->is_finish);
 	    pthread_mutex_unlock(&task->mutex);
 	}
+	atomic_fetch_sub(&args->pool->task_count, 1);
     }
 
 //    pthread_mutex_lock(&args->pool->status_lock);
