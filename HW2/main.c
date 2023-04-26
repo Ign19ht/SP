@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include "string.h"
 
 #define WRITE_END 1
 #define READ_END 0
@@ -23,7 +24,7 @@ void free_cmd(cmd **commands, int cmd_size) {
 			free(command->argv[j]);
 		}
 		free(command->argv);
-		free(command->out);
+		if (command->out) free(command->out);
 		free(command);
 	}
 	free(commands);
@@ -48,7 +49,7 @@ char *get_arg(char *line, int i_start, int i_end) {
 		char c = line[line_i++];
 
 		if (line_i - 1 == i_start && (c == '"' || c == '\'')) continue;
-		if (i > 0 && line[line_i - 2] == '\\' && c == '\\') continue;
+		if (!(i > 0 && line[line_i - 2] == '\\') && c == '\\') continue;
 		if (line_i - 1 == i_end - 1 &&
 			((line[i_start] == '"' || line[i_start] == '\'') && line[i_start] == line[i_end - 1]))
 			continue;
@@ -70,6 +71,7 @@ cmd **parser(char *line, int *command_counter) {
 	cmd **commands = malloc(sizeof(cmd));
 	commands[0] = malloc(sizeof(cmd));
 	commands[0]->argc = 0;
+	commands[0]->out = NULL;
 
 	for (;;) {
 		char current = line[c_index];
@@ -107,23 +109,20 @@ cmd **parser(char *line, int *command_counter) {
 		if (current == '>' && !is_com && !is_text) {
 			is_out = 1;
 			is_rewrite = 1;
-			c_index++;
-			if (line[c_index] == '>') {
+			if (line[c_index + 1] == '>') {
 				is_rewrite = 0;
 				c_index++;
 			}
-			arg_start = c_index;
-			continue;
+			arg_start = c_index + 1;
 		}
 
 		if (current == '|' && !is_com && !is_text) {
 			commands = realloc(commands, sizeof(cmd) * (++cmd_id + 1));
 			commands[cmd_id] = malloc(sizeof(cmd));
 			commands[cmd_id]->argc = 0;
+			commands[cmd_id]->out = NULL;
 			has_name = 0;
-			c_index++;
-			arg_start = c_index;
-			continue;
+			arg_start = c_index + 1;
 		}
 
 		if (is_end) break;
@@ -161,10 +160,12 @@ char *get_line() {
 		}
 
 		if (c == '\n') {
-			if (!sup && !is_text) {
-				break;
+			if (sup) {
+				i--;
+			} else if (is_text) {
+				line[i++] = c;
 			} else {
-				if (sup) line[--i] = ' ';
+				break;
 			}
 		} else {
 			line[i++] = c;
@@ -175,7 +176,7 @@ char *get_line() {
 }
 
 
-void child_work(int child, cmd *command, int *pipe1, int *pipe2, int out) {
+void child_work(int child, cmd *command, int *pipe1, int *pipe2) {
 	if (child == 0) {
 		if (pipe1) {
 			close(pipe1[WRITE_END]);
@@ -185,13 +186,25 @@ void child_work(int child, cmd *command, int *pipe1, int *pipe2, int out) {
 			close(pipe2[READ_END]);
 			dup2(pipe2[WRITE_END], STDOUT_FILENO);
 		}
-		if (out) {
+
+		if (command->out) {
+			int out;
+			if (command->rewrite) {
+				out = open(command->out, O_CREAT | O_WRONLY | O_TRUNC);
+			} else {
+				out = open(command->out, O_CREAT | O_WRONLY | O_APPEND);
+			}
 			dup2(out, STDOUT_FILENO);
+			close(out);
+		}
+
+		if (strcmp(command->name, "cd") == 0) {
+			exit(EXIT_SUCCESS);
 		}
 
 		execvp(command->name, command->argv);
 
-		printf("%s failed.\n", command->name);
+		fprintf(stderr, "%s failed.\n", command->name);
 		exit(EXIT_FAILURE);
 	}
 }
@@ -202,12 +215,15 @@ int main(int argc, char *argv[]) {
 		char *line = get_line();
 		int c;
 		cmd **commands = parser(line, &c);
+		free(line);
 
-		for (int i = 0; i < c; i++) {
-			printf("\n%s %d %s %d\n", commands[i]->name, commands[i]->argc, commands[i]->out, commands[i]->rewrite);
-			for (int j = 0; j < commands[i]->argc; j++) {
-				printf("argv %s\n", commands[i]->argv[j]);
-			}
+		if (c == 1 && strcmp(commands[0]->name, "exit") == 0) {
+			free_cmd(commands, c);
+			break;
+		}
+
+		if (c > 0 && strcmp(commands[0]->name, "cd") == 0) {
+			chdir(commands[0]->argv[1]);
 		}
 		int fd[c - 1][2];
 		for (int i = 0; i < c - 1; i++) {
@@ -218,23 +234,18 @@ int main(int argc, char *argv[]) {
 		for (int i = 0; i < c; i++) {
 			int *pipe1 = NULL;
 			int *pipe2 = NULL;
-			int out = 0;
-			if (i > 0 && c > 1) {
-				pipe1 = fd[i - 1];
-			}
-			if (i < c - 1) {
-				pipe2 = fd[i];
-			}
-			if (commands[i]->out) {
-				if (commands[i]->rewrite) {
-					out = open(commands[i]->out, O_CREAT | O_WRONLY | O_TRUNC);
-				} else {
-					out = open(commands[i]->out, O_CREAT | O_WRONLY | O_APPEND);
+			child[i] = fork();
+			if (child[i] == 0) {
+				for (int j = 0; j < c - 1; j++) {
+					if (j == i - 1) pipe1 = fd[j];
+					else if (j == i) pipe2 = fd[j];
+					else {
+						close(fd[j][READ_END]);
+						close(fd[j][WRITE_END]);
+					}
 				}
 			}
-			child[i] = fork();
-			child_work(child[i], commands[i], pipe1, pipe2, out);
-			if (out) close(out);
+			child_work(child[i], commands[i], pipe1, pipe2);
 		}
 
 		for (int i = 0; i < c - 1; i++) {
@@ -247,6 +258,5 @@ int main(int argc, char *argv[]) {
 			waitpid(child[i], &status, 0);
 		}
 		free_cmd(commands, c);
-		free(line);
 	}
 }
