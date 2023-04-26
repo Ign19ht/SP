@@ -233,10 +233,14 @@ thread_task_timed_join(struct thread_task *task, double timeout, void **result) 
 
 //    struct timespec ts;
 //    clock_gettime(CLOCK_REALTIME, &ts);
-    time_t int_part;
+    double int_part = 0;
     long nano_part = modf(timeout, &int_part) * 1000000000;
-    ts.tv_sec = now.tv_sec + int_part;      // 2 sec
-    ts.tv_nsec = now.tv_usec * 1000 + nano_part; // nsec
+    ts.tv_sec = now.tv_sec + int_part;
+    ts.tv_nsec = now.tv_usec * 1000 + nano_part;
+    if (ts.tv_nsec >= 1000000000) {
+        ts.tv_nsec -= 1000000000;
+        ts.tv_sec += 1;
+    }
 //    ts.tv_sec += int_part;
 //    ts.tv_nsec += nano_part;
 
@@ -244,7 +248,7 @@ thread_task_timed_join(struct thread_task *task, double timeout, void **result) 
     if (atomic_load(&task->status) != TPOOL_STATUS_FINISHED)
         rc = pthread_cond_timedwait(&task->is_finish, &task->mutex, &ts);
     pthread_mutex_unlock(&task->mutex);
-    if (rc != 0) {
+    if (rc == ETIMEDOUT) {
         return TPOOL_ERR_TIMEOUT;
     }
 
