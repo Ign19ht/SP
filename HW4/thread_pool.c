@@ -89,11 +89,12 @@ void *thread_func(void *arguments) {
 		atomic_store(&task->status, TPOOL_STATUS_RUNNING);
 		task->result = task->function(task->arg);
 
+		pthread_mutex_lock(&task->mutex);
 		if (atomic_load(&task->detach)) {
 			atomic_store(&task->status, 0);
+			pthread_mutex_unlock(&task->mutex);
 			thread_task_delete(task);
 		} else {
-			pthread_mutex_lock(&task->mutex);
 			atomic_store(&task->status, TPOOL_STATUS_FINISHED);
 			pthread_cond_broadcast(&task->is_finish);
 			pthread_mutex_unlock(&task->mutex);
@@ -266,13 +267,15 @@ thread_task_timed_join(struct thread_task *task, double timeout, void **result) 
 int
 thread_task_detach(struct thread_task *task) {
 	if (atomic_load(&task->status) == 0) return TPOOL_ERR_TASK_NOT_PUSHED;
+	pthread_mutex_lock(&task->mutex);
 	if (atomic_load(&task->status) == TPOOL_STATUS_FINISHED) {
-		pthread_mutex_lock(&task->mutex);
-		pthread_mutex_unlock(&task->mutex);
 		atomic_store(&task->status, 0);
+		pthread_mutex_unlock(&task->mutex);
 		thread_task_delete(task);
-	} else
+	} else {
 		atomic_store(&task->detach, true);
+		pthread_mutex_unlock(&task->mutex);
+	}
 	return 0;
 }
 
