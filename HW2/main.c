@@ -4,6 +4,7 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include "string.h"
+//#include "heap_help.h"
 
 #define WRITE_END 1
 #define READ_END 0
@@ -20,7 +21,7 @@ typedef struct cmd {
 void free_cmd(cmd **commands, int cmd_size) {
 	for (int i = 0; i < cmd_size; i++) {
 		cmd *command = commands[i];
-		for (int j = 0; j < command->argc; j++) {
+		for (int j = command->argc - 2; j >= 0; j--) {
 			free(command->argv[j]);
 		}
 		free(command->argv);
@@ -33,9 +34,9 @@ void free_cmd(cmd **commands, int cmd_size) {
 
 void append_arg(cmd *command, char *arg) {
 	if (command->argc == 0) {
-		command->argv = malloc(sizeof(char));
+		command->argv = malloc(sizeof(char*));
 	} else {
-		command->argv = realloc(command->argv, sizeof(char) * (command->argc + 1));
+		command->argv = realloc(command->argv, sizeof(char*) * (command->argc + 1));
 	}
 	command->argv[command->argc++] = arg;
 }
@@ -44,15 +45,31 @@ char *get_arg(char *line, int i_start, int i_end) {
 	char *arg = calloc(i_end - i_start + 1, sizeof(char));
 	int i = 0;
 	int line_i = i_start;
+	int is_text = (line[i_start] == '"' || line[i_start] == '\'');
+	int counter = 0;
 	for (;;) {
 		if (line_i == i_end) break;
 		char c = line[line_i++];
 
-		if (line_i - 1 == i_start && (c == '"' || c == '\'')) continue;
-		if (!(i > 0 && line[line_i - 2] == '\\') && c == '\\') continue;
-		if (line_i - 1 == i_end - 1 &&
-			((line[i_start] == '"' || line[i_start] == '\'') && line[i_start] == line[i_end - 1]))
+		if (line_i - 1 == i_start && is_text) continue;
+		if (line_i - 1 == i_end - 1 && is_text) continue;
+		if (c == '\\') {
+			counter++;
 			continue;
+		}
+		if (counter > 0) {
+			if (!is_text) counter--;
+			counter = counter / 2 + counter % 2;
+			int is_spec = counter % 2;
+			counter -= is_spec;
+			for (; counter > 0; counter--) arg[i++] = '\\';
+			if (is_spec) {
+				if (c == 'n') {
+					arg[i++] = '\n';
+					continue;
+				} else arg[i++] = '\\';
+			}
+		}
 		arg[i++] = c;
 	}
 	arg[i] = '\0';
@@ -68,7 +85,8 @@ cmd **parser(char *line, int *command_counter) {
 	int has_name = 0;
 	int is_out = 0;
 	int is_rewrite = 0;
-	cmd **commands = malloc(sizeof(cmd));
+	int counter = 0;
+	cmd **commands = malloc(sizeof(cmd*));
 	commands[0] = malloc(sizeof(cmd));
 	commands[0]->argc = 0;
 	commands[0]->out = NULL;
@@ -76,7 +94,13 @@ cmd **parser(char *line, int *command_counter) {
 	for (;;) {
 		char current = line[c_index];
 
-		int is_com = (c_index > 0 && line[c_index - 1] == '\\') && !(c_index > 1 && line[c_index - 2] == '\\');
+		if (current == '\\') {
+			counter++;
+			c_index++;
+			continue;
+		}
+		int is_com = counter % 2;
+		counter = 0;
 		int is_end = current == '\0';
 
 		if ((current == '"' || current == '\'') && !is_com) {
@@ -88,7 +112,7 @@ cmd **parser(char *line, int *command_counter) {
 			}
 		}
 
-		if ((!is_text && (current == ' ' || current == '>' || current == '|') && !is_com) || is_end) {
+		if ( is_end || (!is_text && ((current == '>' || current == '|' || current == ' ') && !is_com))) {
 			if (arg_start < c_index) {
 				char *arg = get_arg(line, arg_start, c_index);
 				if (is_out) {
@@ -117,7 +141,8 @@ cmd **parser(char *line, int *command_counter) {
 		}
 
 		if (current == '|' && !is_com && !is_text) {
-			commands = realloc(commands, sizeof(cmd) * (++cmd_id + 1));
+			append_arg(commands[cmd_id], NULL);
+			commands = realloc(commands, sizeof(cmd*) * (++cmd_id + 1));
 			commands[cmd_id] = malloc(sizeof(cmd));
 			commands[cmd_id]->argc = 0;
 			commands[cmd_id]->out = NULL;
@@ -128,6 +153,7 @@ cmd **parser(char *line, int *command_counter) {
 		if (is_end) break;
 		c_index++;
 	}
+	append_arg(commands[cmd_id], NULL);
 	*command_counter = cmd_id + 1;
 	return commands;
 }
@@ -198,7 +224,7 @@ void child_work(int child, cmd *command, int *pipe1, int *pipe2) {
 			close(out);
 		}
 
-		if (strcmp(command->name, "cd") == 0) {
+		if (strcmp(command->name, "cd") == 0 || strcmp(command->name, "exit") == 0) {
 			exit(EXIT_SUCCESS);
 		}
 
@@ -212,6 +238,7 @@ void child_work(int child, cmd *command, int *pipe1, int *pipe2) {
 
 int main(int argc, char *argv[]) {
 	for (;;) {
+//		printf("$> ");
 		char *line = get_line();
 		int c;
 		cmd **commands = parser(line, &c);
