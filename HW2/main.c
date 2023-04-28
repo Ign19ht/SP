@@ -4,7 +4,7 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include "string.h"
-//#include "heap_help.h"
+#include "heap_help.h"
 
 #define WRITE_END 1
 #define READ_END 0
@@ -48,7 +48,6 @@ char *get_arg(char *line, int i_start, int i_end) {
 	int is_text = (line[i_start] == '"' || line[i_start] == '\'');
 	int counter = 0;
 	for (;;) {
-		if (line_i == i_end) break;
 		char c = line[line_i++];
 
 		if (line_i - 1 == i_start && is_text) continue;
@@ -70,6 +69,7 @@ char *get_arg(char *line, int i_start, int i_end) {
 				} else arg[i++] = '\\';
 			}
 		}
+		if (line_i - 1 == i_end) break;
 		arg[i++] = c;
 	}
 	arg[i] = '\0';
@@ -101,7 +101,7 @@ cmd **parser(char *line, int *command_counter) {
 		}
 		int is_com = counter % 2;
 		counter = 0;
-		int is_end = current == '\0';
+		int is_end = current == '\0' || (current == '#' && !is_com && !is_text);
 
 		if ((current == '"' || current == '\'') && !is_com) {
 			if (is_text) {
@@ -154,7 +154,7 @@ cmd **parser(char *line, int *command_counter) {
 		c_index++;
 	}
 	append_arg(commands[cmd_id], NULL);
-	*command_counter = cmd_id + 1;
+	if (has_name) *command_counter = cmd_id + 1;
 	return commands;
 }
 
@@ -240,9 +240,14 @@ int main(int argc, char *argv[]) {
 	for (;;) {
 //		printf("$> ");
 		char *line = get_line();
-		int c;
+		int c = 0;
 		cmd **commands = parser(line, &c);
 		free(line);
+
+		if (c == 0) {
+			free_cmd(commands, 1);
+			continue;
+		}
 
 		if (c == 1 && strcmp(commands[0]->name, "exit") == 0) {
 			free_cmd(commands, c);
