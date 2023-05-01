@@ -267,6 +267,15 @@ void child_work(int child, cmd *command, int *pipe1, int *pipe2) {
 }
 
 
+void free_blocks(block_cmd **blocks, int block_count, int start_i) {
+	for (int j = 0; j < block_count; j++) {
+		if (j > start_i) free(blocks[j]->commands);
+		free(blocks[j]);
+	}
+	free(blocks);
+}
+
+
 int main(int argc, char *argv[]) {
 	for (;;) {
 //		printf("$> ");
@@ -323,6 +332,7 @@ int main(int argc, char *argv[]) {
 			if (c == 1 && commands[0]->argc == 1) {
 				free_cmd(commands, 1);
 				if (has_comm) continue;
+				free_blocks(blocks, block_count, block_id);
 				return 0;
 			}
 
@@ -330,6 +340,7 @@ int main(int argc, char *argv[]) {
 				int code = 0;
 				if (commands[0]->argc > 2) code = atoi(commands[0]->argv[1]);
 				free_cmd(commands, c);
+				free_blocks(blocks, block_count, block_id);
 				return code;
 			}
 
@@ -370,6 +381,10 @@ int main(int argc, char *argv[]) {
 			}
 			free_cmd(commands, c);
 		}
+		for (int i = 0; i < block_count; i++) {
+			free(blocks[i]);
+		}
+		free(blocks);
 	}
 	return 0;
 }
