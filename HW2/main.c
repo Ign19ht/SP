@@ -76,7 +76,7 @@ char *get_arg(char *line, int i_start, int i_end) {
 	return arg;
 }
 
-cmd **parser(char *line, int *command_counter) {
+cmd **parser(char *line, int *command_counter, int *has_comm) {
 	int cmd_id = 0;
 	int c_index = 0;
 	int arg_start = 0;
@@ -101,7 +101,9 @@ cmd **parser(char *line, int *command_counter) {
 		}
 		int is_com = counter % 2;
 		counter = 0;
-		int is_end = current == '\0' || (current == '#' && !is_com && !is_text);
+		*has_comm =  current == '#' && !is_com && !is_text;
+		int is_end = current == '\0' || *has_comm;
+
 
 		if ((current == '"' || current == '\'') && !is_com) {
 			if (is_text) {
@@ -154,7 +156,7 @@ cmd **parser(char *line, int *command_counter) {
 		c_index++;
 	}
 	append_arg(commands[cmd_id], NULL);
-	if (has_name) *command_counter = cmd_id + 1;
+	*command_counter = cmd_id + 1;
 	return commands;
 }
 
@@ -241,17 +243,21 @@ int main(int argc, char *argv[]) {
 //		printf("$> ");
 		char *line = get_line();
 		int c = 0;
-		cmd **commands = parser(line, &c);
+		int has_comm = 0;
+		cmd **commands = parser(line, &c, &has_comm);
 		free(line);
 
-		if (c == 0) {
+		if (c == 1 && commands[0]->argc == 1) {
 			free_cmd(commands, 1);
-			continue;
+			if (has_comm) continue;
+			return 0;
 		}
 
 		if (c == 1 && strcmp(commands[0]->name, "exit") == 0) {
+			int code = 0;
+			if (commands[0]->argc > 2) code = atoi(commands[0]->argv[1]);
 			free_cmd(commands, c);
-			break;
+			return code;
 		}
 
 		if (c > 0 && strcmp(commands[0]->name, "cd") == 0) {
@@ -291,4 +297,5 @@ int main(int argc, char *argv[]) {
 		}
 		free_cmd(commands, c);
 	}
+	return 0;
 }
