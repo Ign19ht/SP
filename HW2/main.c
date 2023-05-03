@@ -18,6 +18,12 @@ typedef struct cmd {
 	int rewrite;
 } cmd;
 
+typedef struct block_cmd {
+	cmd **commands;
+	int cmd_counter;
+	int cond;
+}block_cmd;
+
 
 void free_cmd(cmd **commands, int cmd_size) {
 	for (int i = 0; i < cmd_size; i++) {
@@ -77,8 +83,9 @@ char *get_arg(char *line, int i_start, int i_end) {
 	return arg;
 }
 
-cmd **parser(char *line, int *command_counter, int *has_comm) {
+block_cmd **parser(char *line, int *blocks_counter, int *has_comm) {
 	int cmd_id = 0;
+	int block_id = 0;
 	int c_index = 0;
 	int arg_start = 0;
 	int is_text = 0;
@@ -87,6 +94,8 @@ cmd **parser(char *line, int *command_counter, int *has_comm) {
 	int is_out = 0;
 	int is_rewrite = 0;
 	int counter = 0;
+	block_cmd **blocks = malloc(sizeof(block_cmd*));
+	blocks[0] = malloc(sizeof(block_cmd));
 	cmd **commands = malloc(sizeof(cmd*));
 	commands[0] = malloc(sizeof(cmd));
 	commands[0]->argc = 0;
@@ -104,6 +113,9 @@ cmd **parser(char *line, int *command_counter, int *has_comm) {
 		counter = 0;
 		*has_comm =  current == '#' && !is_com && !is_text;
 		int is_end = current == '\0' || *has_comm;
+		int is_block_end_and = current == '&' && !is_text && !is_com && line[c_index + 1] == '&';
+		int is_block_end_or = current == '|' && !is_text && !is_com && line[c_index + 1] == '|';
+		int is_cmd_end = !is_text && (current == '>' || current == '|' || current == ' ') && !is_com;
 
 
 		if ((current == '"' || current == '\'') && !is_com) {
@@ -115,7 +127,7 @@ cmd **parser(char *line, int *command_counter, int *has_comm) {
 			}
 		}
 
-		if ( is_end || (!is_text && ((current == '>' || current == '|' || current == ' ') && !is_com))) {
+		if ( is_end || is_cmd_end || is_block_end_and) {
 			if (arg_start < c_index) {
 				char *arg = get_arg(line, arg_start, c_index);
 				if (is_out) {
@@ -143,7 +155,25 @@ cmd **parser(char *line, int *command_counter, int *has_comm) {
 			arg_start = c_index + 1;
 		}
 
-		if (current == '|' && !is_com && !is_text) {
+		if (is_end || is_block_end_and || is_block_end_or) {
+			append_arg(commands[cmd_id], NULL);
+			blocks[block_id]->commands = commands;
+			blocks[block_id]->cmd_counter = cmd_id + 1;
+			blocks[block_id]->cond = is_block_end_and;
+			if (!is_end) {
+				commands = malloc(sizeof(cmd *));
+				commands[0] = malloc(sizeof(cmd));
+				commands[0]->argc = 0;
+				commands[0]->out = NULL;
+				cmd_id = 0;
+				has_name = 0;
+				blocks = realloc(blocks, sizeof(block_cmd *) * (++block_id + 1));
+				blocks[block_id] = malloc(sizeof(block_cmd));
+				arg_start = ++c_index + 1;
+			}
+		}
+
+		if (current == '|' && !is_com && !is_text && !is_block_end_or) {
 			append_arg(commands[cmd_id], NULL);
 			commands = realloc(commands, sizeof(cmd*) * (++cmd_id + 1));
 			commands[cmd_id] = malloc(sizeof(cmd));
@@ -156,9 +186,8 @@ cmd **parser(char *line, int *command_counter, int *has_comm) {
 		if (is_end) break;
 		c_index++;
 	}
-	append_arg(commands[cmd_id], NULL);
-	*command_counter = cmd_id + 1;
-	return commands;
+	*blocks_counter = block_id + 1;
+	return blocks;
 }
 
 char *get_line() {
@@ -239,64 +268,124 @@ void child_work(int child, cmd *command, int *pipe1, int *pipe2) {
 }
 
 
+void free_blocks(block_cmd **blocks, int block_count, int start_i) {
+	for (int j = 0; j < block_count; j++) {
+		if (j > start_i) free(blocks[j]->commands);
+		free(blocks[j]);
+	}
+	free(blocks);
+}
+
+
 int main(int argc, char *argv[]) {
 	for (;;) {
 //		printf("$> ");
 		char *line = get_line();
-		int c = 0;
+		int block_count = 0;
 		int has_comm = 0;
-		cmd **commands = parser(line, &c, &has_comm);
+		block_cmd **blocks = parser(line, &block_count, &has_comm);
 		free(line);
+		int last_cond = 0;
 
-		if (c == 1 && commands[0]->argc == 1) {
-			free_cmd(commands, 1);
-			if (has_comm) continue;
-			return 0;
-		}
+		for (int block_id = 0; block_id < block_count; block_id++) {
+			cmd **commands = blocks[block_id]->commands;
+			int c = blocks[block_id]->cmd_counter;
+			int cond = 1;
+			int is_value = 0;
 
-		if (c == 1 && strcmp(commands[0]->name, "exit") == 0) {
-			int code = 0;
-			if (commands[0]->argc > 2) code = atoi(commands[0]->argv[1]);
-			free_cmd(commands, c);
-			return code;
-		}
+			if (c == 1 && commands[0]->argc == 2) {
+				is_value = strcmp(commands[0]->name, "false") == 0 || strcmp(commands[0]->name, "true") == 0;
+				cond = strcmp(commands[0]->name, "false") != 0;
+			}
 
-		if (c > 0 && strcmp(commands[0]->name, "cd") == 0) {
-			chdir(commands[0]->argv[1]);
-		}
-		int fd[c - 1][2];
-		for (int i = 0; i < c - 1; i++) {
-			pipe(fd[i]);
-		}
-
-		int child[c];
-		for (int i = 0; i < c; i++) {
-			int *pipe1 = NULL;
-			int *pipe2 = NULL;
-			child[i] = fork();
-			if (child[i] == 0) {
-				for (int j = 0; j < c - 1; j++) {
-					if (j == i - 1) pipe1 = fd[j];
-					else if (j == i) pipe2 = fd[j];
-					else {
-						close(fd[j][READ_END]);
-						close(fd[j][WRITE_END]);
+			if (block_id != 0) {
+				if (blocks[block_id - 1]->cond) {
+					if (is_value) {
+						last_cond = last_cond && cond;
+						free_cmd(commands, c);
+						continue;
 					}
+					if (!last_cond) {
+						free_cmd(commands, c);
+						break;
+					}
+					last_cond = last_cond && cond;
+				} else {
+					if (is_value) {
+						last_cond = last_cond || cond;
+						free_cmd(commands, c);
+						continue;
+					}
+					if (last_cond) {
+						free_cmd(commands, c);
+						break;
+					}
+					last_cond = last_cond || cond;
+				}
+			} else {
+				last_cond = cond;
+				if (is_value) {
+					free_cmd(commands, c);
+					continue;
 				}
 			}
-			child_work(child[i], commands[i], pipe1, pipe2);
-		}
 
-		for (int i = 0; i < c - 1; i++) {
-			close(fd[i][READ_END]);
-			close(fd[i][WRITE_END]);
-		}
+			if (c == 1 && commands[0]->argc == 1) {
+				free_cmd(commands, 1);
+				if (has_comm) continue;
+				free_blocks(blocks, block_count, block_id);
+				return 0;
+			}
 
-		int status;
-		for (int i = 0; i < c; i++) {
-			waitpid(child[i], &status, 0);
+			if (c == 1 && strcmp(commands[0]->name, "exit") == 0) {
+				int code = 0;
+				if (commands[0]->argc > 2) code = atoi(commands[0]->argv[1]);
+				free_cmd(commands, c);
+				free_blocks(blocks, block_count, block_id);
+				return code;
+			}
+
+			if (c > 0 && strcmp(commands[0]->name, "cd") == 0) {
+				chdir(commands[0]->argv[1]);
+			}
+			int fd[c - 1][2];
+			for (int i = 0; i < c - 1; i++) {
+				pipe(fd[i]);
+			}
+
+			int child[c];
+			for (int i = 0; i < c; i++) {
+				int *pipe1 = NULL;
+				int *pipe2 = NULL;
+				child[i] = fork();
+				if (child[i] == 0) {
+					for (int j = 0; j < c - 1; j++) {
+						if (j == i - 1) pipe1 = fd[j];
+						else if (j == i) pipe2 = fd[j];
+						else {
+							close(fd[j][READ_END]);
+							close(fd[j][WRITE_END]);
+						}
+					}
+				}
+				child_work(child[i], commands[i], pipe1, pipe2);
+			}
+
+			for (int i = 0; i < c - 1; i++) {
+				close(fd[i][READ_END]);
+				close(fd[i][WRITE_END]);
+			}
+
+			int status;
+			for (int i = 0; i < c; i++) {
+				waitpid(child[i], &status, 0);
+			}
+			free_cmd(commands, c);
 		}
-		free_cmd(commands, c);
+		for (int i = 0; i < block_count; i++) {
+			free(blocks[i]);
+		}
+		free(blocks);
 	}
 	return 0;
 }
