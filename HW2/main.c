@@ -8,6 +8,7 @@
 
 #define WRITE_END 1
 #define READ_END 0
+#define MY_MODE S_IRWXU | S_IRWXG | S_IRWXO
 
 typedef struct cmd {
 	char *name;
@@ -218,9 +219,9 @@ void child_work(int child, cmd *command, int *pipe1, int *pipe2) {
 		if (command->out) {
 			int out;
 			if (command->rewrite) {
-				out = open(command->out, O_CREAT | O_WRONLY | O_TRUNC);
+				out = open(command->out, O_CREAT | O_WRONLY | O_TRUNC, MY_MODE);
 			} else {
-				out = open(command->out, O_CREAT | O_WRONLY | O_APPEND);
+				out = open(command->out, O_CREAT | O_WRONLY | O_APPEND, MY_MODE);
 			}
 			dup2(out, STDOUT_FILENO);
 			close(out);
