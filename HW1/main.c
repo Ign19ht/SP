@@ -102,7 +102,7 @@ int worker(void *context) {
         printf("%s file sorted by coroutine %d\n", args->filenames[current_i], args->name);
     }
     coro_live_time[args->name] += GetTimeStamp() - coro_start_time[args->name];
-    printf("Coroutine %d finished. Its switch count: %lld , work time: %lu us\n", args->name,
+    printf("Coroutine %d finished. Its switch count: %lld , work time: %llu us\n", args->name,
           coro_switch_count(coro_this()), coro_live_time[args->name]);
     return 0;
 }
@@ -214,6 +214,6 @@ int main(int argc, char *argv[]) {
     free(coro_start_time);
     free(coro_live_time);
 
-    printf("Total work time: %lu us", GetTimeStamp() - start_time);
+    printf("Total work time: %llu us", GetTimeStamp() - start_time);
     return 0;
 }
